@@ -2,8 +2,6 @@
 
 namespace Calmadeveloper\MailApi;
 
-use GuzzleHttp\Client as HttpClient;
-use Illuminate\Support\Arr;
 use Illuminate\Support\ServiceProvider;
 
 class MailApiProvider extends ServiceProvider
@@ -19,17 +17,10 @@ class MailApiProvider extends ServiceProvider
 
     public function registerSwiftTransport()
     {
-        $this->app['swift.transport']->extend('mailapi', function($app) {
+        $this->app['swift.transport']->extend('mailapi', function () {
             $config = $this->app['config']->get('mailapi', []);
-            $guzzle = new HttpClient(Arr::add(
-                $config['guzzle'] ?? [], 'connect_timeout', 60
-            ));
 
-            return new MailApiTransport(
-                $guzzle,
-                $config['api_key'],
-                $config['endpoint']
-            );
+            return new MailApiTransport($config);
         });
     }
 }

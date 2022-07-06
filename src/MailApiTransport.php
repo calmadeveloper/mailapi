@@ -2,20 +2,12 @@
 
 namespace Calmadeveloper\MailApi;
 
-use GuzzleHttp\ClientInterface;
 use Illuminate\Mail\Transport\Transport;
 use Swift_Mime_SimpleMessage;
 use Swift_TransportException;
 
 class MailApiTransport extends Transport
 {
-    /**
-     * Guzzle HTTP client.
-     *
-     * @var ClientInterface
-     */
-    protected $client;
-
     /**
      * The Mailjet "API key" which can be found at https://app.mailjet.com/transactional
      *
@@ -31,17 +23,26 @@ class MailApiTransport extends Transport
     protected $endpoint = '';
 
     /**
-     * Create a new Mailjet transport instance.
-     *
-     * @param \GuzzleHttp\ClientInterface $client
-     * @param $apiKey
-     * @param $endpoint
+     * @var string
      */
-    public function __construct(ClientInterface $client, $apiKey, $endpoint)
+    protected $connection = '';
+
+    /**
+     * @var string
+     */
+    protected $queue = '';
+
+    /**
+     * MailApiTransport constructor.
+     * @param array $config
+     */
+    public function __construct(array $config)
     {
-        $this->client = $client;
-        $this->apiKey = $apiKey;
-        $this->endpoint = $endpoint;
+        $this->apiKey = $config['api_key'];
+        $this->endpoint = $config['endpoint'];
+        $this->connection = $config['connection'];
+        $this->queue = $config['queue'];
+
     }
 
     /**
@@ -49,7 +50,6 @@ class MailApiTransport extends Transport
      * @param null $failedRecipients
      * @return int
      * @throws Swift_TransportException
-     * @throws \GuzzleHttp\Exception\GuzzleException
      */
     public function send(Swift_Mime_SimpleMessage $message, &$failedRecipients = null): int
     {
@@ -69,21 +69,13 @@ class MailApiTransport extends Transport
             $this->addRecipients($message, $payload);
             $this->addAttachments($message, $payload);
 
-            $response = $this->client->request('POST', $this->endpoint, $payload);
+            dispatch(new MailApiJob($this->endpoint, $payload))
+                ->onConnection($this->connection)
+                ->onQueue($this->queue);
 
-            if ($response->getStatusCode() !== 200) {
-                throw new \Exception($response->getBody()->getContents());
-            }
         } catch (\Exception $e) {
-            throw new Swift_TransportException('Request to '. $this->endpoint .' API failed.', $e->getCode(), $e);
+            throw new Swift_TransportException($e, $e->getCode(), $e);
         }
-
-        $resultArray = json_decode($response->getBody()->getContents(), true);
-
-        $message->getHeaders()->addTextHeader('X-Message-ID', $resultArray['message_id']);
-        $message->getHeaders()->addTextHeader('X-SES-Message-ID', $resultArray['message_id']);
-
-        $this->sendPerformed($message);
 
         return $this->numberOfRecipients($message);
     }
