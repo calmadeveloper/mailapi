@@ -30,6 +30,11 @@ class MailApiJob implements ShouldQueue
     private const RELEASE_DELAY = 60; //seconds
 
     /**
+     * @var int
+     */
+    public $tries = 1440;
+
+    /**
      * MailApiJob constructor.
      * @param string $endpoint
      * @param array $payload
