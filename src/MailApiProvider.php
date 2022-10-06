@@ -17,7 +17,7 @@ class MailApiProvider extends ServiceProvider
 
     public function registerSwiftTransport()
     {
-        $this->app['mail.manager']->extend('mailapi', function () {
+        $this->app['mailer']->extend('mailapi', function () {
             $config = $this->app['config']->get('mailapi', []);
 
             return new MailApiTransport($config);
