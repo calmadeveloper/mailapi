@@ -2,22 +2,21 @@
 
 namespace Calmadeveloper\MailApi;
 
-use Illuminate\Mail\Transport\Transport;
-use Swift_Mime_SimpleMessage;
-use Swift_TransportException;
+use Symfony\Component\Mailer\SentMessage;
+use Symfony\Component\Mailer\Exception\TransportException;
+use Symfony\Component\Mailer\Transport\AbstractTransport;
+use Symfony\Component\Mime\MessageConverter;
+use Symfony\Component\Mime\Email;
+use Symfony\Component\Mime\Part\DataPart;
 
-class MailApiTransport extends Transport
+class MailApiTransport extends AbstractTransport
 {
     /**
-     * The Mailjet "API key" which can be found at https://app.mailjet.com/transactional
-     *
      * @var string
      */
-    protected $apiKey;
+    protected $apiKey = '';
 
     /**
-     * The Mailjet end point we're using to send the message.
-     *
      * @var string
      */
     protected $endpoint = '';
@@ -34,6 +33,7 @@ class MailApiTransport extends Transport
 
     /**
      * MailApiTransport constructor.
+     *
      * @param array $config
      */
     public function __construct(array $config)
@@ -43,17 +43,15 @@ class MailApiTransport extends Transport
         $this->connection = $config['connection'];
         $this->queue = $config['queue'];
 
+        parent::__construct();
     }
 
     /**
-     * @param Swift_Mime_SimpleMessage $message
-     * @param null $failedRecipients
-     * @return int
-     * @throws Swift_TransportException
+     * @param SentMessage $message
      */
-    public function send(Swift_Mime_SimpleMessage $message, &$failedRecipients = null): int
+    protected function doSend(SentMessage $message): void
     {
-        $this->beforeSendPerformed($message);
+        $email = MessageConverter::toEmail($message->getOriginalMessage());
 
         try {
             $payload = [
@@ -63,36 +61,33 @@ class MailApiTransport extends Transport
                 ]
             ];
 
-            $this->addFrom($message, $payload);
-            $this->addSubject($message, $payload);
-            $this->addContent($message, $payload);
-            $this->addRecipients($message, $payload);
-            $this->addAttachments($message, $payload);
+            $this->addFrom($email, $payload);
+            $this->addSubject($email, $payload);
+            $this->addContent($email, $payload);
+            $this->addRecipients($email, $payload);
+            $this->addAttachments($email, $payload);
 
             dispatch(new MailApiJob($this->endpoint, $payload))
                 ->onConnection($this->connection)
                 ->onQueue($this->queue);
 
         } catch (\Exception $e) {
-            throw new Swift_TransportException($e, $e->getCode(), $e);
+            throw new TransportException($e->getMessage(), $e->getCode(), $e);
         }
-
-        return $this->numberOfRecipients($message);
     }
 
     /**
-     * @param Swift_Mime_SimpleMessage $message
+     * @param Email $email
      * @param $payload
      */
-    protected function addFrom(Swift_Mime_SimpleMessage $message, &$payload)
+    protected function addFrom(Email $email, &$payload)
     {
-        $from = $message->getFrom();
+        $from = collect($email->getFrom());
 
-        $fromAddress = key($from);
-        if ($fromAddress) {
-            $payload['json']['from_email'] = $fromAddress;
+        if ($from->isNotEmpty()) {
+            $payload['json']['from_email'] = $from->first()->getAddress();
 
-            $fromName = $from[$fromAddress] ?: null;
+            $fromName = $from->first()->getName() ?: null;
             if ($fromName) {
                 $payload['json']['from_name'] = $fromName;
             }
@@ -100,22 +95,73 @@ class MailApiTransport extends Transport
     }
 
     /**
-     * @param Swift_Mime_SimpleMessage $message
+     * @param Email $email
      * @param $payload
      */
-    protected function addAttachments(Swift_Mime_SimpleMessage $message, &$payload)
+    protected function addSubject(Email $email, &$payload)
     {
-        if ($message->getChildren()) {
+        $subject = $email->getSubject();
+
+        if ($subject) {
+            $payload['json']['subject'] = $subject;
+        }
+    }
+
+    /**
+     * @param Email $email
+     * @param $payload
+     */
+    protected function addContent(Email $email, &$payload)
+    {
+        $contentType = $email->getTextBody() === null ? 'html' : 'text';
+        $body = $contentType === 'html' ? $email->getHtmlBody() : $email->getTextBody();
+
+        $payload['json'][$contentType] = $body;
+    }
+
+    /**
+     * @param Email $email
+     * @param $payload
+     */
+    protected function addRecipients(Email $email, &$payload)
+    {
+        foreach (['To', 'Cc', 'Bcc'] as $field) {
+            $formatted = [];
+            $method = 'get' . $field;
+            $contacts = (array)$email->$method();
+            foreach ($contacts as $address) {
+                $formatted[] = $address->toString();
+            }
+
+            if (count($formatted) > 0) {
+                $payload['json'][strtolower($field)] = implode(', ', $formatted);
+            }
+        }
+    }
+
+    /**
+     * @param Email $email
+     * @param $payload
+     */
+    protected function addAttachments(Email $email, &$payload)
+    {
+        $attachments = $email->getAttachments();
+
+        if (count($attachments) > 0) {
             $payload['json']['attachments'] = array();
-            foreach ($message->getChildren() as $attachment) {
-                if (is_object($attachment) and $attachment instanceof \Swift_Mime_Attachment) {
+
+            foreach ($attachments as $attachment) {
+                if (is_object($attachment) and $attachment instanceof DataPart) {
                     $a = array(
-                        'filename' => $attachment->getFilename(),
+                        'filename' => $attachment->getPreparedHeaders()->get('content-disposition')->getParameter('filename'),
                         'content' => base64_encode($attachment->getBody()),
-                        'content_type' => $attachment->getContentType()
+                        'content_type' => $attachment->getPreparedHeaders()->get('content-type')->getBody()
                     );
-                    if ($attachment->getDisposition() != 'attachment' && $attachment->getId() != NULL) {
-                        $a['content_id'] = 'cid:' . $attachment->getId();
+                    if (
+                        $attachment->getPreparedHeaders()->get('content-disposition')->getBody() != 'attachment' &&
+                        $attachment->getContentId() != NULL
+                    ) {
+                        $a['content_id'] = 'cid:' . $attachment->getContentId();
                     }
                     $payload['json']['attachments'][] = $a;
                 }
@@ -124,50 +170,10 @@ class MailApiTransport extends Transport
     }
 
     /**
-     * @param Swift_Mime_SimpleMessage $message
-     * @param $payload
+     * @return string
      */
-    protected function addSubject(Swift_Mime_SimpleMessage $message, &$payload)
+    public function __toString(): string
     {
-        $subject = $message->getSubject();
-        if ($subject) {
-            $payload['json']['subject'] = $subject;
-        }
-    }
-
-    /**
-     * @param Swift_Mime_SimpleMessage $message
-     * @param $payload
-     */
-    protected function addContent(Swift_Mime_SimpleMessage $message, &$payload)
-    {
-        $contentType = $message->getContentType();
-        $body = $message->getBody();
-
-        if (!in_array($contentType, ['text/html', 'text/plain'])) {
-            $contentType = strip_tags($body) != $body ? 'text/html' : 'text/plain';
-        }
-
-        $payload['json'][$contentType == 'text/html' ? 'html' : 'text'] = $message->getBody();
-    }
-
-    /**
-     * @param Swift_Mime_SimpleMessage $message
-     * @param $payload
-     */
-    protected function addRecipients(Swift_Mime_SimpleMessage $message, &$payload)
-    {
-        foreach (['To', 'Cc', 'Bcc'] as $field) {
-            $formatted = [];
-            $method = 'get' . $field;
-            $contacts = (array)$message->$method();
-            foreach ($contacts as $address => $display) {
-                $formatted[] = $display ? $display . " <$address>" : $address;
-            }
-
-            if (count($formatted) > 0) {
-                $payload['json'][strtolower($field)] = implode(', ', $formatted);
-            }
-        }
+        return 'mailapi';
     }
 }
