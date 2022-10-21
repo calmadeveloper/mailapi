@@ -113,10 +113,9 @@ class MailApiTransport extends AbstractTransport
      */
     protected function addContent(Email $email, &$payload)
     {
-        $contentType = $email->getTextBody() === null ? 'html' : 'text';
-        $body = $contentType === 'html' ? $email->getHtmlBody() : $email->getTextBody();
+        $body = $email->getTextBody() === null ? $email->getHtmlBody() : $email->getTextBody();
 
-        $payload['json'][$contentType] = $body;
+        $payload['json']['html'] = $body;
     }
 
     /**
