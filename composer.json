@@ -14,5 +14,7 @@
             "Calmadeveloper\\MailApi\\": "src/"
         }
     },
-    "require": {}
+    "require": {
+        "laravel/framework": "^9.0"
+    }
 }
