@@ -32,6 +32,13 @@ class MailApiTransport extends AbstractTransport
     protected $queue = '';
 
     /**
+     * @var bool
+     */
+    protected $isDev = false;
+
+    protected $isDevForceEnabled = false;
+
+    /**
      * MailApiTransport constructor.
      *
      * @param array $config
@@ -42,6 +49,9 @@ class MailApiTransport extends AbstractTransport
         $this->endpoint = $config['endpoint'];
         $this->connection = $config['connection'];
         $this->queue = $config['queue'];
+
+        $this->isDev = app()->environment(config('mailapi.dev_environments', ['dev', 'local']));
+        $this->isDevForceEnabled = config('mailapi.dev_force_enabled', false);
 
         parent::__construct();
     }
@@ -57,7 +67,9 @@ class MailApiTransport extends AbstractTransport
             $payload = [
                 'header' => ['Content-Type', 'application/json'],
                 'json' => [
-                    'api_key' => $this->apiKey
+                    'api_key' => $this->apiKey,
+                    'is_dev' => $this->isDev,
+                    'environment' => app()->environment()
                 ]
             ];
 
@@ -101,9 +113,10 @@ class MailApiTransport extends AbstractTransport
     protected function addSubject(Email $email, &$payload)
     {
         $subject = $email->getSubject();
+        $prefix = $this->isDevForceEnabled && $this->isDev ? 'DEV ' : '';
 
         if ($subject) {
-            $payload['json']['subject'] = $subject;
+            $payload['json']['subject'] = $prefix . $subject;
         }
     }
 
@@ -124,16 +137,33 @@ class MailApiTransport extends AbstractTransport
      */
     protected function addRecipients(Email $email, &$payload)
     {
-        foreach (['To', 'Cc', 'Bcc'] as $field) {
-            $formatted = [];
-            $method = 'get' . $field;
-            $contacts = (array)$email->$method();
-            foreach ($contacts as $address) {
-                $formatted[] = $address->toString();
+        $devForceTo = config('mailapi.dev_force_to');
+        $devForceCc = config('mailapi.dev_force_cc');
+        $devForceBcc = config('mailapi.dev_force_bcc');
+
+        if ($this->isDevForceEnabled && $this->isDev && null !== $devForceTo) {
+            $payload['json']['to'] = $devForceTo;
+
+            if (null !== $devForceCc) {
+                $payload['json']['cc'] = $devForceCc;
             }
 
-            if (count($formatted) > 0) {
-                $payload['json'][strtolower($field)] = implode(', ', $formatted);
+            if (null !== $devForceBcc) {
+                $payload['json']['bcc'] = $devForceBcc;
+            }
+        } else {
+            foreach (['To', 'Cc', 'Bcc'] as $field) {
+                $formatted = [];
+
+                $method = 'get' . $field;
+                $contacts = (array)$email->$method();
+                foreach ($contacts as $address) {
+                    $formatted[] = $address->toString();
+                }
+
+                if (count($formatted) > 0) {
+                    $payload['json'][strtolower($field)] = implode(', ', $formatted);
+                }
             }
         }
     }
