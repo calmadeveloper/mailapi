@@ -113,10 +113,14 @@ class MailApiTransport extends AbstractTransport
     protected function addSubject(Email $email, &$payload)
     {
         $subject = $email->getSubject();
-        $realRecipients = $this->getRealRecipients($email);
-        $to = $realRecipients['to'] ?? $realRecipients['cc'] ?? $realRecipients['bcc'] ?? '';
+        $prefix = '';
 
-        $prefix = $this->isDevForceEnabled && $this->isDev ? "DEV ($to) " : '';
+        if ($this->isDevForceEnabled && $this->isDev) {
+            $realRecipients = $this->getRealRecipients($email);
+            $to = $realRecipients['to'] ?? $realRecipients['cc'] ?? $realRecipients['bcc'] ?? '';
+
+            $prefix = "DEV ($to) ";
+        }
 
         if ($subject) {
             $payload['json']['subject'] = $prefix . $subject;
