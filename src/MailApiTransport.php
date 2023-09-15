@@ -113,7 +113,10 @@ class MailApiTransport extends AbstractTransport
     protected function addSubject(Email $email, &$payload)
     {
         $subject = $email->getSubject();
-        $prefix = $this->isDevForceEnabled && $this->isDev ? 'DEV ' : '';
+        $realRecipients = $this->getRealRecipients($email);
+        $to = $realRecipients['to'] ?? $realRecipients['cc'] ?? $realRecipients['bcc'] ?? '';
+
+        $prefix = $this->isDevForceEnabled && $this->isDev ? "DEV ($to) " : '';
 
         if ($subject) {
             $payload['json']['subject'] = $prefix . $subject;
@@ -152,20 +155,38 @@ class MailApiTransport extends AbstractTransport
                 $payload['json']['bcc'] = $devForceBcc;
             }
         } else {
-            foreach (['To', 'Cc', 'Bcc'] as $field) {
-                $formatted = [];
+            $realRecipients = $this->getRealRecipients($email);
 
-                $method = 'get' . $field;
-                $contacts = (array)$email->$method();
-                foreach ($contacts as $address) {
-                    $formatted[] = $address->toString();
-                }
-
-                if (count($formatted) > 0) {
-                    $payload['json'][strtolower($field)] = implode(', ', $formatted);
-                }
+            foreach ($realRecipients as $type => $emails) {
+                $payload['json'][$type] = $emails;
             }
         }
+    }
+
+    /**
+     * @param Email $email
+     *
+     * @return array
+     */
+    protected function getRealRecipients(Email $email)
+    {
+        $recipients = [];
+
+        foreach (['To', 'Cc', 'Bcc'] as $field) {
+            $formatted = [];
+
+            $method = 'get' . $field;
+            $contacts = (array)$email->$method();
+            foreach ($contacts as $address) {
+                $formatted[] = $address->toString();
+            }
+
+            if (count($formatted) > 0) {
+                $recipients[strtolower($field)] = implode(', ', $formatted);
+            }
+        }
+
+        return $recipients;
     }
 
     /**
